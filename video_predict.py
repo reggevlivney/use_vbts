@@ -8,24 +8,25 @@ Small-resolution height-map video generator.
 """
 import time
 
-import cv2, numpy as np, torch
+import cv2
+import numpy as np
+import torch
 from pathlib import Path
 from tqdm import tqdm
-from scipy.fft import fftfreq
+from scipy.fftpack import fftfreq
 import matplotlib
-import visualize3d
+# import visualize3d
 from pixel_mlp import PixelMLP32Tanh
 import keyboard
-import line_profiler
 from queue import Queue
 
 # ───────── configuration ─────────────────────────────────────────────
 ROOT         = Path("dataset")
 VIDEO_IN     = ROOT/"video"/"sensor_feed_3.mp4"
 VIDEO_OUT    = ROOT/"video"/"video_output.mp4"
-EMPTY_IMG    = ROOT/"images_digit"/"empty.jpg"
-MODEL_PTH    = "pixel_mlp_normals_digit.pth"
-VIDEO_SOURCE = "camera" # "camera","file"
+EMPTY_IMG    = ROOT/"images"/"empty.jpg"
+MODEL_PTH    = "pixel_mlp_normals.pth"
+VIDEO_SOURCE = "file" # "camera","file"
 CAMERA_ID    = 0
 
 print(f'Input from {VIDEO_SOURCE}. Checking CUDA availability...')
@@ -109,7 +110,7 @@ def main():
     # ───────── per-frame loop ────────────────────────────────────────────
     print('Opening 3D visualizer...')
     frame_idx = 0
-    vis3d = visualize3d.Visualize3D(Ws,Hs,'',None)
+    # vis3d = visualize3d.Visualize3D(Ws,Hs,'',None)
     print('Let\'s go! Press q to end run.')
 
     # Init queue
@@ -178,8 +179,8 @@ def main():
 
             # -------- write frame ------------
             out.write(height_to_bgr(height))
-            vis3d.update(500*height)
-            disp_normals = normals[...,::-1].copy() + 1;
+            # vis3d.update(500*height)
+            disp_normals = normals[...,::-1].copy() + 1
             disp_normals[...,0] = 0
             cv2.imshow("Image",rgb_s)
             if frame_idx%50 == 0:
