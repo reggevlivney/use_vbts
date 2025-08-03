@@ -7,7 +7,7 @@ Small-resolution height-map video generator.
  * Whole pipeline runs at SCALE × original size; output video is small.
 """
 import time
-
+from platform import system
 import cv2
 import numpy as np
 import torch
@@ -19,12 +19,12 @@ import keyboard
 from queue import Queue
 
 # ─────────user configuration ─────────────────────────────────────────────
-SENSOR_TYPE   = "gelsight" # "digit", "gelsight", "gelpinch"
-SYSTEM_TYPE   = "linux" # "linux", "windows" 
+SENSOR_TYPE  = "gelsight" # "digit", "gelsight", "gelpinch"
+SYSTEM_TYPE  = system() # "linux", "windows" 
 VIDEO_SOURCE = "file" # "camera","file"
 CAMERA_ID    = 0
 assert SENSOR_TYPE in ["digit", "gelsight", "gelpinch"], "Invalid SENSOR_TYPE"
-assert SYSTEM_TYPE in ["linux", "windows"], "Invalid SYSTEM_TYPE"
+assert SYSTEM_TYPE in ["Linux", "Windows"], "Invalid SYSTEM_TYPE"
 
 # ───────── configuration ─────────────────────────────────────────────
 ROOT         = Path("")
@@ -36,7 +36,7 @@ MODEL_PTH    = "pixel_mlp_normals_" + SENSOR_TYPE + ".pth"
 if VIDEO_SOURCE == "file":
     SOURCE_REF = str(VIDEO_IN)
 else:
-    if SYSTEM_TYPE == "windows":
+    if SYSTEM_TYPE == "Windows":
         SOURCE_REF = CAMERA_ID
     else:
         SOURCE_REF = '/dev/video' + str(CAMERA_ID)
@@ -50,7 +50,7 @@ NZ_THRESH   = 0.2
 MAG_THRESH  = 0.02
 MORPH_K     = 9
 
-if SYSTEM_TYPE == "windows":
+if SYSTEM_TYPE == "Windows":
     from matplotlib import colormaps as cm
     from scipy.fft import fftfreq
     import visualize3d
@@ -109,7 +109,7 @@ def main():
 
     print('Loading neural net...')
     net = PixelMLP32Tanh(in_dim=5,out_dim=3,layer_size=64).to(DEVICE)
-    if SYSTEM_TYPE == "windows":
+    if SYSTEM_TYPE == "Windows":
         net.load_state_dict(torch.load(MODEL_PTH, map_location=DEVICE, weights_only=True))
     else:
         net.load_state_dict(torch.load(MODEL_PTH, map_location=DEVICE))
@@ -127,7 +127,7 @@ def main():
     xs = xs.astype(np.float32); ys = ys.astype(np.float32)
 
     # ───────── per-frame loop ────────────────────────────────────────────
-    if SYSTEM_TYPE == "windows":
+    if SYSTEM_TYPE == "Windows":
         print('Opening 3D visualizer...')
         vis3d = visualize3d.Visualize3D(Ws,Hs,'',None)
     print('Let\'s go! Press q to end run.')
@@ -144,7 +144,7 @@ def main():
         while True:
             ret, bgr_cap = cap.read()
             if not ret: break
-            if SYSTEM_TYPE == "windows":
+            if SYSTEM_TYPE == "Windows":
                 if keyboard.is_pressed('q'): break
             bgr_queue.get()
             bgr_queue.put(bgr_cap/Nqueue)
@@ -152,7 +152,6 @@ def main():
             frame_idx += 1
 
             # -------- ΔRGB, resize ----------
-            # rgb = bgr[..., ::-1].astype(np.float32)/255.
             rgb = bgr.astype(np.float32)/255.
             rgb_s = cv2.resize(rgb, (Ws, Hs), interpolation=cv2.INTER_AREA) if VIDEO_SOURCE=="camera" else rgb
             d = rgb_s - ref
@@ -199,7 +198,7 @@ def main():
 
             # -------- write frame ------------
             out.write(height_to_bgr(height))
-            if SYSTEM_TYPE == "windows":
+            if SYSTEM_TYPE == "Windows":
                 vis3d.update(50*height)
             disp_normals = normals[...,::-1].copy() + 1;
             disp_normals[...,0] = 0
