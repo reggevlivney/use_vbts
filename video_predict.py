@@ -204,6 +204,7 @@ def main():
             disp_normals[...,0] = 0
             rgb_disp = np.clip(rgb_s * 255, 0, 255).astype(np.uint8)
             cv2.imshow("Image", rgb_disp)
+            cv2.waitKey(1)
             if frame_idx%50 == 0:
                 print(f"  processed {frame_idx} frames", flush=True)
 
