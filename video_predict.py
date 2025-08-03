@@ -148,77 +148,80 @@ def main():
     for i in range(Nqueue):
         ret, bgr = cap.read()
         bgr_queue.put(bgr/Nqueue)
+    try:
+        with torch.no_grad():
+            while True:
+                ret, bgr_cap = cap.read()
+                if not ret: break
+                if SYSTEM_TYPE == "Windows":
+                    if keyboard.is_pressed('q'): break
+                bgr_queue.get()
+                bgr_queue.put(bgr_cap/Nqueue)
+                bgr = np.sum(np.array(bgr_queue.queue),0)
+                frame_idx += 1
 
-    with torch.no_grad():
-        while True:
-            ret, bgr_cap = cap.read()
-            if not ret: break
-            if SYSTEM_TYPE == "Windows":
-                if keyboard.is_pressed('q'): break
-            bgr_queue.get()
-            bgr_queue.put(bgr_cap/Nqueue)
-            bgr = np.sum(np.array(bgr_queue.queue),0)
-            frame_idx += 1
+                # -------- ΔRGB, resize ----------
+                rgb = bgr.astype(np.float32)/255.
+                rgb_s = cv2.resize(rgb, (Ws, Hs), interpolation=cv2.INTER_AREA) if VIDEO_SOURCE=="camera" else rgb
+                d = rgb_s - ref
 
-            # -------- ΔRGB, resize ----------
-            rgb = bgr.astype(np.float32)/255.
-            rgb_s = cv2.resize(rgb, (Ws, Hs), interpolation=cv2.INTER_AREA) if VIDEO_SOURCE=="camera" else rgb
-            d = rgb_s - ref
+                # -------- feature tensor (Nqueue×5) ---
+                feat = np.stack([ d[...,0], d[...,1], d[...,2],
+                                2*xs/Ws-1, 2*ys/Hs-1 ], -1)\
+                    .reshape(-1,5).astype(np.float32)
 
-            # -------- feature tensor (Nqueue×5) ---
-            feat = np.stack([ d[...,0], d[...,1], d[...,2],
-                              2*xs/Ws-1, 2*ys/Hs-1 ], -1)\
-                   .reshape(-1,5).astype(np.float32)
+                # -------- MLP inference ----------
+                t2 = time.time()
+                preds=[]
+                for i in range(0, feat.shape[0], BATCH_PIX):
+                    chunk = torch.from_numpy(feat[i:i+BATCH_PIX]).to(DEVICE)
+                    preds.append(net(chunk).float().cpu().numpy())
+                normals = np.concatenate(preds,0).reshape(Hs,Ws,3)
 
-            # -------- MLP inference ----------
-            t2 = time.time()
-            preds=[]
-            for i in range(0, feat.shape[0], BATCH_PIX):
-                chunk = torch.from_numpy(feat[i:i+BATCH_PIX]).to(DEVICE)
-                preds.append(net(chunk).float().cpu().numpy())
-            normals = np.concatenate(preds,0).reshape(Hs,Ws,3)
+                # -------- mask & slopes ----------
+                nz  = normals[...,2]
+                mag = np.linalg.norm(d, axis=-1)
+                mask = (mag > MAG_THRESH) & (nz >= NZ_THRESH)
+                SE = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(MORPH_K,MORPH_K))
+                mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, SE)
+                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,SE)
 
-            # -------- mask & slopes ----------
-            nz  = normals[...,2]
-            mag = np.linalg.norm(d, axis=-1)
-            mask = (mag > MAG_THRESH) & (nz >= NZ_THRESH)
-            SE = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(MORPH_K,MORPH_K))
-            mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, SE)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE,SE)
+                nx, ny = normals[...,0], normals[...,1]
+                p = np.zeros_like(nz, dtype=np.float32)
+                q = np.zeros_like(nz, dtype=np.float32)
+                inside = mask.astype(bool)
+                if inside.any():
+                    p[inside] = -nx[inside]/(nz[inside]+1e-6)
+                    q[inside] = -ny[inside]/(nz[inside]+1e-6)
+                    np.clip(p,-10,10,out=p); np.clip(q,-10,10,out=q)
+                p -= p.mean(); q -= q.mean()
 
-            nx, ny = normals[...,0], normals[...,1]
-            p = np.zeros_like(nz, dtype=np.float32)
-            q = np.zeros_like(nz, dtype=np.float32)
-            inside = mask.astype(bool)
-            if inside.any():
-                p[inside] = -nx[inside]/(nz[inside]+1e-6)
-                q[inside] = -ny[inside]/(nz[inside]+1e-6)
-                np.clip(p,-10,10,out=p); np.clip(q,-10,10,out=q)
-            p -= p.mean(); q -= q.mean()
+                # -------- Poisson FFT on GPU -----
+                p_t = torch.from_numpy(p).to(DEVICE)
+                q_t = torch.from_numpy(q).to(DEVICE)
+                h_t = poisson_height_gpu(-p_t, -q_t, fx, fy, denom)
+                height = h_t.cpu().numpy()            # Hs×Ws float32 0-1
+                if frame_idx == 1:
+                    height0 = height
+                height = height - height0
 
-            # -------- Poisson FFT on GPU -----
-            p_t = torch.from_numpy(p).to(DEVICE)
-            q_t = torch.from_numpy(q).to(DEVICE)
-            h_t = poisson_height_gpu(-p_t, -q_t, fx, fy, denom)
-            height = h_t.cpu().numpy()            # Hs×Ws float32 0-1
-            if frame_idx == 1:
-                height0 = height
-            height = height - height0
-
-            # -------- write frame ------------
-            out.write(height_to_bgr(height))
-            if SYSTEM_TYPE == "Windows":
-                vis3d.update(50*height)
-            disp_normals = normals[...,::-1].copy() + 1;
-            disp_normals[...,0] = 0
-            rgb_disp = np.clip(rgb_s * 255, 0, 255).astype(np.uint8)
-            cv2.imshow("Image", rgb_disp)
-            cv2.waitKey(1)
-            if frame_idx%50 == 0:
-                print(f"  processed {frame_idx} frames", flush=True)
+                # -------- write frame ------------
+                out.write(height_to_bgr(height))
+                if SYSTEM_TYPE == "Windows":
+                    vis3d.update(50*height)
+                disp_normals = normals[...,::-1].copy() + 1;
+                disp_normals[...,0] = 0
+                rgb_disp = np.clip(rgb_s * 255, 0, 255).astype(np.uint8)
+                cv2.imshow("Image", rgb_disp)
+                cv2.waitKey(1)
+                if frame_idx%50 == 0:
+                    print(f"  processed {frame_idx} frames", flush=True)
+    except KeyboardInterrupt:
+        print("Keyboard interrupt, finishing.")
 
     cap.release(); out.release()
     print("[done] small height video saved:", VIDEO_OUT)
+    quit()
 
 if __name__ == "__main__":
     main()
