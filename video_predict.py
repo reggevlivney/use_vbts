@@ -17,21 +17,30 @@ import matplotlib
 from pixel_mlp import PixelMLP32Tanh
 import keyboard
 from queue import Queue
+import argparse
 
-# ─────────user configuration ─────────────────────────────────────────────
-SENSOR_TYPE  = "gelsight" # "digit", "gelsight", "gelpinch"
-SYSTEM_TYPE  = system() # "linux", "windows" 
-VIDEO_SOURCE = "file" # "camera","file"
-CAMERA_ID    = 0
-assert SENSOR_TYPE in ["digit", "gelsight", "gelpinch"], "Invalid SENSOR_TYPE"
-assert SYSTEM_TYPE in ["Linux", "Windows"], "Invalid SYSTEM_TYPE"
+# ───────── Parse inputs ─────────────────────────────────────────────
+parser = argparse.ArgumentParser()
+parser.add_argument('--source', type=str, help='camera or file')
+parser.add_argument('--sensor', type=str, help='digit, gelsight or gelpinch')
+parser.add_argument('--file', type=str, help='Path to input video file')
+parser.add_argument('--out', type=str, help='Path to output video file')
+args = parser.parse_args()
 
 # ───────── configuration ─────────────────────────────────────────────
 ROOT         = Path("")
-VIDEO_IN     = ROOT/"dataset"/"video"/"sensor_feed_3.mp4"
-VIDEO_OUT    = ROOT/"dataset"/"video"/"video_output.mp4"
+SENSOR_TYPE  = "gelsight" if args.sensor is None else args.sensor # "digit", "gelsight", "gelpinch"
+SYSTEM_TYPE  = system() # "linux", "windows" 
+VIDEO_SOURCE = "file" if args.source is None else args.source # "camera","file"
+CAMERA_ID    = 0
+VIDEO_IN     = ROOT/"dataset"/"video"/"sensor_feed_3.mp4" if args.file is None else args.file
+VIDEO_OUT    = ROOT/"dataset"/"video"/"video_output.mp4" if args.out is None else args.out
 EMPTY_IMG    = ROOT/"empty"/(SENSOR_TYPE+".jpg")
 MODEL_PTH    = "pixel_mlp_normals_" + SENSOR_TYPE + ".pth"
+
+assert SENSOR_TYPE in ["digit", "gelsight", "gelpinch"], "Invalid SENSOR_TYPE"
+assert SYSTEM_TYPE in ["Linux", "Windows"], "Invalid SYSTEM_TYPE"
+assert VIDEO_SOURCE in ["camera", "file"], "Invalid VIDEO_SOURCE"
 
 if VIDEO_SOURCE == "file":
     SOURCE_REF = str(VIDEO_IN)
