@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 # video_height_scaled.py ----------------------------------------------
 """
 Small-resolution height-map video generator.
@@ -15,6 +16,7 @@ from pathlib import Path
 from tqdm import tqdm
 from scipy.fftpack import fftfreq
 import matplotlib
+from matplotlib import cm
 # import visualize3d
 from pixel_mlp import PixelMLP32Tanh
 import keyboard
@@ -37,8 +39,7 @@ NZ_THRESH   = 0.2
 MAG_THRESH  = 0.02
 MORPH_K     = 9
 
-viridis = matplotlib.colormaps.get_cmap("viridis")
-
+viridis = cm.get_cmap("viridis")
 assert VIDEO_IN.exists() and EMPTY_IMG.exists() and Path(MODEL_PTH).exists()
 
 # ───────── GPU Poisson helpers ───────────────────────────────────────
@@ -93,7 +94,7 @@ def main():
 
     print('Loading neural net...')
     net = PixelMLP32Tanh(in_dim=5,out_dim=3,layer_size=64).to(DEVICE)
-    net.load_state_dict(torch.load(MODEL_PTH, map_location=DEVICE, weights_only=True))
+    net.load_state_dict(torch.load(MODEL_PTH, map_location=DEVICE))
     net.eval()
 
     print('Mathematical preparations...')
@@ -120,14 +121,14 @@ def main():
         ret, bgr = cap.read()
         bgr_queue.put(bgr/Nqueue)
 
-    with torch.no_grad(), torch.amp.autocast('cuda'):
+    with torch.no_grad():
         while True:
             ret, bgr_cap = cap.read()
+            if not ret: break
             bgr_queue.get()
             bgr_queue.put(bgr_cap/Nqueue)
-            print(bgr_queue.qsize())
             bgr = np.sum(np.array(bgr_queue.queue),0)
-            if keyboard.is_pressed('q') or not ret: break
+            #if keyboard.is_pressed('q') or not ret: break
             frame_idx += 1
 
             # -------- ΔRGB, resize ----------
