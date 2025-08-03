@@ -221,6 +221,7 @@ def main():
 
     cap.release(); out.release()
     print("[done] small height video saved:", VIDEO_OUT)
+    print("Closing program...")
     quit()
 
 if __name__ == "__main__":
