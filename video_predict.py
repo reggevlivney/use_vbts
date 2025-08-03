@@ -56,6 +56,7 @@ if SYSTEM_TYPE == "windows":
     import visualize3d
 else:
     from matplotlib import cm
+    from scipy.fftpack import fftfreq
 viridis = cm.get_cmap("viridis")
 
 assert VIDEO_IN.exists() and EMPTY_IMG.exists() and Path(MODEL_PTH).exists()
@@ -108,7 +109,10 @@ def main():
 
     print('Loading neural net...')
     net = PixelMLP32Tanh(in_dim=5,out_dim=3,layer_size=64).to(DEVICE)
-    net.load_state_dict(torch.load(MODEL_PTH, map_location=DEVICE, weights_only=True))
+    if SYSTEM_TYPE == "windows":
+        net.load_state_dict(torch.load(MODEL_PTH, map_location=DEVICE, weights_only=True))
+    else:
+        net.load_state_dict(torch.load(MODEL_PTH, map_location=DEVICE))
     net.eval()
 
     print('Mathematical preparations...')
@@ -136,10 +140,12 @@ def main():
         ret, bgr = cap.read()
         bgr_queue.put(bgr/Nqueue)
 
-    with torch.no_grad(), torch.amp.autocast('cuda'):
+    with torch.no_grad():
         while True:
             ret, bgr_cap = cap.read()
-            if keyboard.is_pressed('q') or not ret: break
+            if not ret: break
+            if SYSTEM_TYPE == "windows":
+                if keyboard.is_pressed('q'): break
             bgr_queue.get()
             bgr_queue.put(bgr_cap/Nqueue)
             bgr = np.sum(np.array(bgr_queue.queue),0)
@@ -194,7 +200,7 @@ def main():
             # -------- write frame ------------
             out.write(height_to_bgr(height))
             if SYSTEM_TYPE == "windows":
-                vis3d.update(500*height)
+                vis3d.update(50*height)
             disp_normals = normals[...,::-1].copy() + 1;
             disp_normals[...,0] = 0
             rgb_disp = np.clip(rgb_s * 255, 0, 255).astype(np.uint8)
