@@ -13,7 +13,6 @@ import numpy as np
 import torch
 from pathlib import Path
 from tqdm import tqdm
-from scipy.fft import fftfreq
 import matplotlib
 from pixel_mlp import PixelMLP32Tanh
 import keyboard
@@ -53,6 +52,7 @@ MORPH_K     = 9
 
 if SYSTEM_TYPE == "windows":
     from matplotlib import colormaps as cm
+    from scipy.fft import fftfreq
     import visualize3d
 else:
     from matplotlib import cm
