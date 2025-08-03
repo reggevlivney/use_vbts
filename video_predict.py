@@ -8,35 +8,55 @@ Small-resolution height-map video generator.
 """
 import time
 
-import cv2, numpy as np, torch
+import cv2
+import numpy as np
+import torch
 from pathlib import Path
 from tqdm import tqdm
 from scipy.fft import fftfreq
 import matplotlib
-import visualize3d
 from pixel_mlp import PixelMLP32Tanh
 import keyboard
-import line_profiler
 from queue import Queue
 
-# ───────── configuration ─────────────────────────────────────────────
-ROOT         = Path("dataset")
-VIDEO_IN     = ROOT/"video"/"sensor_feed_3.mp4"
-VIDEO_OUT    = ROOT/"video"/"video_output.mp4"
-EMPTY_IMG    = ROOT/"images_digit"/"empty.jpg"
-MODEL_PTH    = "pixel_mlp_normals_digit.pth"
-VIDEO_SOURCE = "camera" # "camera","file"
+# ─────────user configuration ─────────────────────────────────────────────
+SENSOR_TYPE   = "gelsight" # "digit", "gelsight", "gelpinch"
+SYSTEM_TYPE   = "linux" # "linux", "windows" 
+VIDEO_SOURCE = "file" # "camera","file"
 CAMERA_ID    = 0
+assert SENSOR_TYPE in ["digit", "gelsight", "gelpinch"], "Invalid SENSOR_TYPE"
+assert SYSTEM_TYPE in ["linux", "windows"], "Invalid SYSTEM_TYPE"
+
+# ───────── configuration ─────────────────────────────────────────────
+ROOT         = Path("")
+VIDEO_IN     = ROOT/"dataset"/"video"/"sensor_feed_3.mp4"
+VIDEO_OUT    = ROOT/"dataset"/"video"/"video_output.mp4"
+EMPTY_IMG    = ROOT/"empty"/(SENSOR_TYPE+".jpg")
+MODEL_PTH    = "pixel_mlp_normals_" + SENSOR_TYPE + ".pth"
+
+if VIDEO_SOURCE == "file":
+    SOURCE_REF = str(VIDEO_IN)
+else:
+    if SYSTEM_TYPE == "windows":
+        SOURCE_REF = CAMERA_ID
+    else:
+        SOURCE_REF = '/dev/video' + str(CAMERA_ID)
 
 print(f'Input from {VIDEO_SOURCE}. Checking CUDA availability...')
 SCALE       = 1 # if VIDEO_SOURCE=="file" else 0.1   # ← SAME scale you used in training
 DEVICE      = "cuda" if torch.cuda.is_available() else "cpu"
+print("Using device:", DEVICE)
 BATCH_PIX   = 65536
 NZ_THRESH   = 0.2
 MAG_THRESH  = 0.02
 MORPH_K     = 9
 
-viridis = matplotlib.colormaps.get_cmap("viridis")
+if SYSTEM_TYPE == "windows":
+    from matplotlib import colormaps as cm
+    import visualize3d
+else:
+    from matplotlib import cm
+viridis = cm.get_cmap("viridis")
 
 assert VIDEO_IN.exists() and EMPTY_IMG.exists() and Path(MODEL_PTH).exists()
 
@@ -60,13 +80,13 @@ def height_to_bgr(h_np):
     return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
 # ───────── open video streams ────────────────────────────────────────
-# @line_profiler.profile
 def main():
     info_string = str(VIDEO_IN) if VIDEO_SOURCE=="file" else f'Camera ID:{CAMERA_ID}'
     print(f'Opening input stream ({info_string})...')
-    cap = cv2.VideoCapture(str(VIDEO_IN) if VIDEO_SOURCE=="file" else CAMERA_ID)
-    # cap = cv2.VideoCapture(0)
+
+    cap = cv2.VideoCapture(SOURCE_REF)
     if not cap.isOpened(): raise IOError("Cannot open video")
+
     fps   = cap.get(cv2.CAP_PROP_FPS) * (0.3 if VIDEO_SOURCE=='camera' else 1)
     Wfull = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     Hfull = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -80,12 +100,8 @@ def main():
     out = cv2.VideoWriter(str(VIDEO_OUT), four, fps, (Ws, Hs))
 
     # ───────── load reference & model ────────────────────────────────────
-    # if VIDEO_SOURCE == "file":
-    #     ref_full = cv2.imread(str(EMPTY_IMG))[..., ::-1].astype(np.float32)/255.
-    # else:
     print('Getting reference image - do not touch sensor.')
     res, ref_full = cap.read()
-    # ref_full = ref_full[..., ::-1].astype(np.float32)/255
     ref_full = ref_full.astype(np.float32)/255
 
     ref = cv2.resize(ref_full, (Ws, Hs), interpolation=cv2.INTER_AREA)
@@ -107,12 +123,13 @@ def main():
     xs = xs.astype(np.float32); ys = ys.astype(np.float32)
 
     # ───────── per-frame loop ────────────────────────────────────────────
-    print('Opening 3D visualizer...')
-    frame_idx = 0
-    vis3d = visualize3d.Visualize3D(Ws,Hs,'',None)
+    if SYSTEM_TYPE == "windows":
+        print('Opening 3D visualizer...')
+        vis3d = visualize3d.Visualize3D(Ws,Hs,'',None)
     print('Let\'s go! Press q to end run.')
 
     # Init queue
+    frame_idx = 0
     Nqueue = 3
     bgr_queue = Queue()
     for i in range(Nqueue):
@@ -122,11 +139,10 @@ def main():
     with torch.no_grad(), torch.amp.autocast('cuda'):
         while True:
             ret, bgr_cap = cap.read()
+            if keyboard.is_pressed('q') or not ret: break
             bgr_queue.get()
             bgr_queue.put(bgr_cap/Nqueue)
-            print(bgr_queue.qsize())
             bgr = np.sum(np.array(bgr_queue.queue),0)
-            if keyboard.is_pressed('q') or not ret: break
             frame_idx += 1
 
             # -------- ΔRGB, resize ----------
@@ -147,7 +163,6 @@ def main():
                 chunk = torch.from_numpy(feat[i:i+BATCH_PIX]).to(DEVICE)
                 preds.append(net(chunk).float().cpu().numpy())
             normals = np.concatenate(preds,0).reshape(Hs,Ws,3)
-            print(time.time() - t2)
 
             # -------- mask & slopes ----------
             nz  = normals[...,2]
@@ -178,14 +193,15 @@ def main():
 
             # -------- write frame ------------
             out.write(height_to_bgr(height))
-            vis3d.update(500*height)
+            if SYSTEM_TYPE == "windows":
+                vis3d.update(500*height)
             disp_normals = normals[...,::-1].copy() + 1;
             disp_normals[...,0] = 0
-            cv2.imshow("Image",rgb_s)
+            rgb_disp = np.clip(rgb_s * 255, 0, 255).astype(np.uint8)
+            cv2.imshow("Image", rgb_disp)
             if frame_idx%50 == 0:
                 print(f"  processed {frame_idx} frames", flush=True)
-            # if frame_idx==100:
-            #     break
+
     cap.release(); out.release()
     print("[done] small height video saved:", VIDEO_OUT)
 
