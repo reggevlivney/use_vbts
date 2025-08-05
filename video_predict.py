@@ -49,6 +49,7 @@ else:
         SOURCE_REF = CAMERA_ID
     else:
         SOURCE_REF = '/dev/video' + str(CAMERA_ID)
+SOURCE_REF = Path(SOURCE_REF)
 
 print(f'Input from {VIDEO_SOURCE}. Checking CUDA availability...')
 SCALE       = 1 # if VIDEO_SOURCE=="file" else 0.1   # ← SAME scale you used in training
@@ -68,7 +69,7 @@ else:
     from scipy.fftpack import fftfreq
 viridis = cm.get_cmap("viridis")
 
-assert VIDEO_IN.exists() and EMPTY_IMG.exists() and Path(MODEL_PTH).exists()
+assert SOURCE_REF.exists() and EMPTY_IMG.exists() and Path(MODEL_PTH).exists()
 
 # ───────── GPU Poisson helpers ───────────────────────────────────────
 def make_freq_grid(H, W, device):
